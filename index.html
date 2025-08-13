@@ -3,288 +3,100 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>PDF arrastável + hitboxes (exemplo)</title>
+<title>PDF arrastável + hitboxes</title>
 <style>
-  :root { --bg:#111; --fg:#eee; --controls-bg: rgba(0,0,0,0.6); }
-  html,body { height:100%; margin:0; font-family:system-ui,Arial; background:var(--bg); color:var(--fg); }
-  /* Controles */
+  html,body { height:100%; margin:0; background:#111; color:#eee; font-family:Arial; }
   #controls {
-    position:fixed; left:12px; top:12px; z-index:9999;
-    background:var(--controls-bg); padding:8px; border-radius:8px; display:flex; gap:6px; align-items:center;
+    position:fixed; left:10px; top:10px; z-index:9999;
+    background:rgba(0,0,0,0.6); padding:6px; border-radius:6px;
   }
-  #controls button { background:transparent; color:var(--fg); border:1px solid rgba(255,255,255,0.08); padding:6px 8px; border-radius:6px; cursor:pointer; }
-  #controls button:active { transform:translateY(1px); }
-  #pageInfo { font-size:13px; opacity:0.9; margin-left:6px; }
-
-  /* Viewer full-screen */
+  #controls button { margin-right:4px; }
   #viewer { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
   #canvasContainer {
     position:relative;
-    width:100%;
-    height:100%;
-    overflow:auto;           /* enable panning by scrolling */
-    -webkit-overflow-scrolling: touch;
-    touch-action: none;      /* we'll handle pointer pan */
-    background: #222;
-    display:flex; align-items:center; justify-content:center;
+    width:100%; height:100%;
+    overflow:auto;
+    background:#222;
   }
-  /* Canvas that shows the page */
-  canvas#pdfCanvas { background:#fff; display:block; user-select:none; -webkit-user-drag:none; }
-
-  /* Hitboxes */
+  canvas { background:white; display:block; }
   .hitbox {
     position:absolute;
+    background:transparent;
     cursor:pointer;
-    background:transparent; /* use semi-transparent for debugging: rgba(255,0,0,0.12) */
-    border-radius:6px;
-    z-index:50;
-    transition:box-shadow .12s;
   }
-  .hitbox:hover { box-shadow: 0 6px 18px rgba(0,0,0,0.35); }
-  .hitbox[data-label]:hover::after{
-    content: attr(data-label);
-    position:absolute; left:0; top:-34px;
-    background:rgba(0,0,0,0.8); color:#fff; padding:6px 8px; font-size:13px; border-radius:6px; white-space:nowrap;
-  }
-
-  /* mensagem de erro */
-  #msg { position:fixed; right:12px; top:12px; z-index:9999; color:#f88; background:rgba(0,0,0,0.6); padding:8px 10px; border-radius:6px; display:none; }
 </style>
 </head>
 <body>
 
 <div id="controls">
-  <button id="prev" title="Página anterior">◀</button>
-  <button id="next" title="Próxima página">▶</button>
-  <button id="zoomOut" title="Diminuir zoom">−</button>
-  <button id="zoomIn" title="Aumentar zoom">+</button>
-  <button id="fit" title="Ajustar à tela">📐</button>
-  <span id="pageInfo">Carregando…</span>
+  <button id="prev">◀</button>
+  <button id="next">▶</button>
+  <button id="zoomOut">−</button>
+  <button id="zoomIn">+</button>
 </div>
-
-<div id="msg"></div>
 
 <div id="viewer">
   <div id="canvasContainer">
     <canvas id="pdfCanvas"></canvas>
-    <!-- hitboxes serão inseridas dinamicamente aqui -->
   </div>
 </div>
 
-<!-- PDF.js CDN -->
+<!-- PDF.js -->
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.6.172/build/pdf.min.js"></script>
 <script>
-/* ========== CONFIGURAÇÃO ========== */
-/* Substitua pelo seu PDF (pode ser caminho relativo ou URL). */
-const pdfUrl = 'sample.pdf';
+const pdfUrl = 'meu.pdf'; // coloque seu PDF na mesma pasta do index.html
 
-/* Hitboxes definidas por página.
-   left, top, width, height em porcentagem (0-100)
-   type: 'link' ou 'js'
-   label: texto do tooltip
-   href: para tipo link
-   action: nome da função para tipo js */
 const hitboxesPerPage = {
   1: [
-    { left: 8, top: 68, width: 22, height: 9, type: 'link', href: 'https://youtube.com', label: 'Abrir YouTube' },
-    { left: 40, top: 28, width: 18, height: 12, type: 'js', action: 'acaoInternal', label: 'Ação interna' }
+    { left: 10, top: 70, width: 20, height: 8, type: 'link', href: 'https://youtube.com' }
   ]
-  // Se tiver mais páginas: 2: [ ... ], 3: [ ... ]
 };
-
-/* ========== FIM CONFIG ========== */
 
 const pdfjsLib = window['pdfjs-dist/build/pdf'];
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.6.172/build/pdf.worker.min.js';
 
 const canvas = document.getElementById('pdfCanvas');
-const container = document.getElementById('canvasContainer');
 const ctx = canvas.getContext('2d');
-const pageInfo = document.getElementById('pageInfo');
-const msg = document.getElementById('msg');
+const container = document.getElementById('canvasContainer');
 
-let pdfDoc = null;
-let pageNum = 1;
-let scale = 1;          // escala atual (pixels)
-let fitToScreen = true; // se true, ajusta inicialmente para caber na tela
+let pdfDoc = null, pageNum = 1, scale = 1;
 
-/* ---------- Renderização ---------- */
-async function loadPdf() {
-  try {
-    pdfDoc = await pdfjsLib.getDocument(pdfUrl).promise;
-    pageInfo.textContent = `Página ${pageNum} / ${pdfDoc.numPages}`;
-    await renderPage(pageNum);
-  } catch (e) {
-    console.error(e);
-    showMsg('Erro ao carregar PDF. Verifique o nome do arquivo/CORS.');
-  }
+async function loadPdf(){
+  pdfDoc = await pdfjsLib.getDocument(pdfUrl).promise;
+  renderPage(pageNum);
 }
 
-async function renderPage(num) {
+async function renderPage(num){
   const page = await pdfDoc.getPage(num);
-  const viewport = page.getViewport({ scale: 1 });
-
-  // calcula escala para caber no container (mantendo proporção)
-  const cW = container.clientWidth || window.innerWidth;
-  const cH = container.clientHeight || window.innerHeight;
-  let targetScale = scale;
-  if (fitToScreen) {
-    const fitScale = Math.min(cW / viewport.width, cH / viewport.height);
-    targetScale = fitScale;
-  }
-
-  // usa targetScale para renderizar a boa resolução
-  const renderViewport = page.getViewport({ scale: targetScale });
-
-  // ajusta canvas para resolução natural (pixels)
-  canvas.width = Math.floor(renderViewport.width);
-  canvas.height = Math.floor(renderViewport.height);
-
-  // renderiza no contexto
-  await page.render({ canvasContext: ctx, viewport: renderViewport }).promise;
-
-  // CSS para responsividade: deixa canvas ocupar o espaço do seu tamanho natural
-  canvas.style.width = canvas.width + 'px';
-  canvas.style.height = canvas.height + 'px';
-
-  // atualiza escala guardada (se fitToScreen foi usado, grava esse scale)
-  scale = targetScale;
+  const viewport = page.getViewport({ scale });
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: ctx, viewport }).promise;
   placeHitboxes(num);
-  pageInfo.textContent = `Página ${pageNum} / ${pdfDoc.numPages} — zoom ${(scale*100).toFixed(0)}%`;
 }
 
-/* ---------- Hitboxes ---------- */
-function clearHitboxes() {
-  const prev = container.querySelectorAll('.hitbox');
-  prev.forEach(n => n.remove());
-}
-
-let preventClick = false; // usado para ignorar cliques após drag grande
-function placeHitboxes(p) {
-  clearHitboxes();
-  const list = hitboxesPerPage[p] || [];
-  list.forEach((h, idx) => {
-    const el = (h.type === 'link') ? document.createElement('a') : document.createElement('div');
+function placeHitboxes(p){
+  container.querySelectorAll('.hitbox').forEach(h => h.remove());
+  (hitboxesPerPage[p] || []).forEach(h => {
+    const el = document.createElement('a');
     el.className = 'hitbox';
-    el.dataset.label = h.label || '';
-    // usa porcentagem (relativa ao container)
+    el.href = h.href;
+    el.target = '_blank';
     el.style.left = h.left + '%';
     el.style.top = h.top + '%';
     el.style.width = h.width + '%';
     el.style.height = h.height + '%';
-    el.style.zIndex = 50;
-    // se for link
-    if (h.type === 'link') {
-      el.href = h.href;
-      el.target = '_blank';
-      el.rel = 'noopener';
-      el.addEventListener('click', (ev) => {
-        if (preventClick) { ev.preventDefault(); ev.stopPropagation(); }
-      });
-    } else if (h.type === 'js') {
-      el.addEventListener('click', (ev) => {
-        if (preventClick) { ev.preventDefault(); ev.stopPropagation(); return; }
-        // chama função definida pelo nome (se existir)
-        const fn = window[h.action];
-        if (typeof fn === 'function') fn(h, ev);
-        else console.warn('Ação JS não encontrada:', h.action);
-      });
-    }
+    el.style.position = 'absolute';
+    el.style.zIndex = 10;
     container.appendChild(el);
   });
 }
 
-/* ---------- Ações de exemplo ---------- */
-function acaoInternal() {
-  alert('Executou ação interna: abrir modal, preencher form, etc.');
-}
+document.getElementById('prev').onclick = () => { if(pageNum>1){ pageNum--; renderPage(pageNum); } };
+document.getElementById('next').onclick = () => { if(pageNum<pdfDoc.numPages){ pageNum++; renderPage(pageNum); } };
+document.getElementById('zoomIn').onclick = () => { scale *= 1.2; renderPage(pageNum); };
+document.getElementById('zoomOut').onclick = () => { scale /= 1.2; renderPage(pageNum); };
 
-/* ---------- Navegação / Zoom ---------- */
-document.getElementById('prev').addEventListener('click', ()=> {
-  if (!pdfDoc) return;
-  if (pageNum <= 1) return;
-  pageNum--;
-  fitToScreen = false;
-  renderPage(pageNum);
-});
-document.getElementById('next').addEventListener('click', ()=> {
-  if (!pdfDoc) return;
-  if (pageNum >= pdfDoc.numPages) return;
-  pageNum++;
-  fitToScreen = false;
-  renderPage(pageNum);
-});
-document.getElementById('zoomIn').addEventListener('click', ()=> {
-  fitToScreen = false;
-  scale = scale * 1.2;
-  renderPage(pageNum);
-});
-document.getElementById('zoomOut').addEventListener('click', ()=> {
-  fitToScreen = false;
-  scale = scale / 1.2;
-  renderPage(pageNum);
-});
-document.getElementById('fit').addEventListener('click', ()=> {
-  fitToScreen = true;
-  renderPage(pageNum);
-});
-
-/* ---------- Drag para pan (scroll by drag) - funciona com mouse e touch via pointer events ---------- */
-let isPointerDown = false;
-let startX=0, startY=0, scrollLeftStart=0, scrollTopStart=0;
-let dragMoved = false;
-
-container.addEventListener('pointerdown', (e) => {
-  // queremos iniciar o arrastar apenas quando clicar fora de inputs, etc
-  isPointerDown = true;
-  container.setPointerCapture(e.pointerId);
-  startX = e.clientX;
-  startY = e.clientY;
-  scrollLeftStart = container.scrollLeft;
-  scrollTopStart = container.scrollTop;
-  dragMoved = false;
-});
-
-container.addEventListener('pointermove', (e) => {
-  if (!isPointerDown) return;
-  const dx = e.clientX - startX;
-  const dy = e.clientY - startY;
-  if (Math.abs(dx) > 4 || Math.abs(dy) > 4) dragMoved = true;
-  container.scrollLeft = scrollLeftStart - dx;
-  container.scrollTop = scrollTopStart - dy;
-});
-
-container.addEventListener('pointerup', (e) => {
-  if (isPointerDown) {
-    isPointerDown = false;
-    try { container.releasePointerCapture(e.pointerId); } catch(_) {}
-    if (dragMoved) {
-      preventClick = true;
-      // limpa preventClick rapidamente (um clique subsequente será ignorado)
-      setTimeout(()=> preventClick = false, 50);
-    }
-  }
-});
-
-/* evita seleção de texto ao arrastar */
-container.addEventListener('dragstart', (e) => e.preventDefault());
-
-/* ---------- Resize: re-render para recalcular escala/posições ---------- */
-let resizeTimer = null;
-window.addEventListener('resize', ()=> {
-  if (!pdfDoc) return;
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(()=> renderPage(pageNum), 160);
-});
-
-/* ---------- Utils ---------- */
-function showMsg(text, timeout=4000) {
-  msg.textContent = text;
-  msg.style.display = 'block';
-  if (timeout>0) setTimeout(()=> msg.style.display='none', timeout);
-}
-
-/* ---------- Inicializa tudo ---------- */
 loadPdf();
 </script>
 </body>
